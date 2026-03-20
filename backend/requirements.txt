@@ -1,0 +1,46 @@
+# FastAPI and Server
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Database
+sqlalchemy==2.0.25
+alembic==1.13.1
+
+# LangChain and AI
+langchain==0.1.0
+langchain-community==0.0.13
+langchain-groq==0.1.10
+chromadb==0.4.22
+sentence-transformers==2.2.2
+pypdf==4.0.0
+unstructured==0.18.32
+python-magic==0.4.27
+
+# API Clients
+twilio==8.12.0
+python-telegram-bot==20.7
+requests==2.31.0
+httpx==0.26.0
+
+# Google APIs
+google-auth==2.27.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.116.0
+google-cloud-storage==2.14.0
+
+# Utilities
+pydantic==2.5.3
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+pillow
+aiofiles==23.2.1
+aiosqlite==0.19.0
+celery==5.3.6
+redis==5.0.1
+pytest==7.4.4
+pytest-asyncio==0.23.3
+websockets==12.0
