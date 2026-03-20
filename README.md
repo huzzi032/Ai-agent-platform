@@ -294,10 +294,11 @@ This project is licensed under the MIT License.
 
 ## 📞 Support
 
-For support, email support@aiagentplatform.com or join our Discord community.
+For support, email huzaifachaduhary@gmail.com.
 
 ---
 
 Made with ❤️ by the AI Agent Platform Team
-#   A i - a g e n t - p l a t f o r m  
+#   A i - a g e n t - p l a t f o r m 
+ 
  
