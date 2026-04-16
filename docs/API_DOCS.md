@@ -332,15 +332,17 @@ Response (WhatsApp example):
 {
   "type": "whatsapp",
   "setup_steps": [
-    "1. Create a Twilio account...",
-    "2. Get a WhatsApp-enabled phone number..."
+    "1. Create a Meta Developer account...",
+    "2. Add WhatsApp product and copy credentials..."
   ],
   "code_snippet": "# Python code...",
   "webhook_url": "http://localhost:8000/api/agents/1/webhook/whatsapp",
   "api_endpoint": "/api/agents/1/webhook/whatsapp",
   "requirements": [
-    "Twilio Account",
-    "WhatsApp-enabled phone number"
+    "Meta Business App",
+    "WhatsApp Access Token",
+    "WhatsApp Phone Number ID",
+    "Verify Token"
   ]
 }
 ```
@@ -356,15 +358,49 @@ Returns JavaScript code for embedding the chatbot widget.
 
 ## Webhooks
 
-### WhatsApp Webhook (Twilio)
+### WhatsApp Webhook Verification (Meta)
 ```bash
-POST /agents/{agent_id}/webhook/whatsapp
-Content-Type: application/x-www-form-urlencoded
-
-From=whatsapp:+1234567890&Body=Hello&MessageSid=SMxxx
+GET /agents/{agent_id}/webhook/whatsapp?hub.mode=subscribe&hub.verify_token=xxx&hub.challenge=xxx
 ```
 
-Returns TwiML response.
+Returns the `hub.challenge` value on successful verification.
+
+### WhatsApp Webhook Events (Meta)
+```bash
+POST /agents/{agent_id}/webhook/whatsapp
+Content-Type: application/json
+
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "contacts": [
+              {
+                "profile": {"name": "John"},
+                "wa_id": "923001234567"
+              }
+            ],
+            "messages": [
+              {
+                "from": "923001234567",
+                "id": "wamid.XXX",
+                "type": "text",
+                "text": {"body": "Hello"}
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Returns JSON status.
 
 ### Telegram Webhook
 ```bash

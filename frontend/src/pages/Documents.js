@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useParams, Link as RouterLink } from 'react-router-dom';
 import { 
   ArrowLeft, 
   Upload, 
   FileText, 
   Image, 
+  Link2,
   Trash2, 
   CheckCircle,
   Loader2,
@@ -133,7 +134,7 @@ const Documents = () => {
       case 'image':
         return <Image className="w-8 h-8 text-blue-500" />;
       case 'url':
-        return <Link className="w-8 h-8 text-green-500" />;
+        return <Link2 className="w-8 h-8 text-green-500" />;
       case 'text':
         return <FileText className="w-8 h-8 text-gray-500" />;
       default:
@@ -154,12 +155,12 @@ const Documents = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-4">
-          <Link
+          <RouterLink
             to={`/agents/${id}`}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
           >
             <ArrowLeft className="w-5 h-5 text-gray-600" />
-          </Link>
+          </RouterLink>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Documents</h1>
             <p className="text-gray-500">Manage training documents for {agent?.name}</p>
@@ -322,7 +323,7 @@ const Documents = () => {
                     </>
                   ) : (
                     <>
-                      <Link className="w-5 h-5" />
+                      <Link2 className="w-5 h-5" />
                       Add URL Content
                     </>
                   )}

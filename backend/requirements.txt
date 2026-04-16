@@ -8,6 +8,7 @@ passlib[bcrypt]==1.7.4
 # Database
 sqlalchemy==2.0.25
 alembic==1.13.1
+psycopg2-binary==2.9.9
 
 # LangChain and AI
 langchain==0.1.0
@@ -20,7 +21,6 @@ unstructured==0.18.32
 python-magic==0.4.27
 
 # API Clients
-twilio==8.12.0
 python-telegram-bot==20.7
 requests==2.31.0
 httpx==0.26.0

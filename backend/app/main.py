@@ -5,8 +5,9 @@ import logging
 import io
 import re
 import zipfile
+import tempfile
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, List, Tuple
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -25,6 +26,7 @@ from models.database import (
     get_engine, init_db, get_session_local, 
     User, Agent, Document, Conversation, Message
 )
+import models.database as database_module
 from models.schemas import (
     UserCreate, UserResponse, UserLogin, Token,
     AgentCreate, AgentUpdate, AgentResponse, AgentDetailResponse,
@@ -77,6 +79,10 @@ async def lifespan(app: FastAPI):
     engine = get_engine(settings.DATABASE_URL)
     init_db(engine)
     SessionLocal = get_session_local(engine)
+    database_module.SessionLocal = SessionLocal
+
+    # Ensure local runtime directories exist for dev/serverless temp persistence.
+    os.makedirs(settings.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
     
     # Initialize RAG service
     try:
@@ -104,10 +110,10 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # OAuth2 scheme
@@ -117,11 +123,76 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 # Dependency to get DB session
 def get_db():
     """Get database session."""
+    if SessionLocal is None:
+        raise HTTPException(status_code=500, detail="Database is not initialized")
+
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+async def get_current_user_from_db(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Resolve current user using the active runtime DB session."""
+    return await get_current_user(token=token, db=db)
+
+
+def _build_training_payload(documents: List[Document]) -> Tuple[List[str], List[dict], List[str]]:
+    """Build texts, metadata and IDs from extracted documents."""
+    texts: List[str] = []
+    metadatas: List[dict] = []
+    ids: List[str] = []
+
+    for doc in documents:
+        if not doc.extracted_text:
+            continue
+
+        texts.append(doc.extracted_text)
+        metadatas.append({
+            "document_id": doc.id,
+            "filename": doc.filename,
+            "file_type": doc.file_type,
+        })
+        ids.append(f"doc_{doc.id}")
+
+    return texts, metadatas, ids
+
+
+def _ensure_agent_collection_populated(agent: Agent, db: Session) -> None:
+    """Rebuild vector collection from DB documents when storage is cold/ephemeral."""
+    if not agent.collection_name or not agent.is_trained:
+        return
+
+    rag_service = get_rag_service()
+    stats = rag_service.get_collection_stats(agent.collection_name)
+    if stats.get("exists") and stats.get("document_count", 0) > 0:
+        return
+
+    documents = db.query(Document).filter(
+        Document.agent_id == agent.id,
+        Document.processing_status == "completed"
+    ).all()
+
+    texts, metadatas, ids = _build_training_payload(documents)
+    if not texts:
+        return
+
+    try:
+        rag_service.delete_collection(agent.collection_name)
+    except Exception:
+        pass
+
+    rag_service.create_collection(agent.collection_name)
+    rag_service.add_documents(
+        collection_name=agent.collection_name,
+        documents=texts,
+        metadatas=metadatas,
+        ids=ids,
+    )
 
 
 def _normalize_hex_color(color: str, default: str = "#4F46E5") -> str:
@@ -160,7 +231,7 @@ def _build_wordpress_plugin_zip(
     """Build a WordPress plugin ZIP file that embeds the chatbot widget."""
     slug = f"ai-chatbot-agent-{agent_id}"
     php_filename = f"{slug}.php"
-    position = widget_position if widget_position in {"bottom-right", "bottom-left"} else "bottom-right"
+    position = widget_position if widget_position in {"bottom-right", "bottom-left", "top-right", "top-left"} else "bottom-right"
 
     api_url_php = _escape_php_single_quoted(api_url)
     welcome_message_php = _escape_php_single_quoted(welcome_message)
@@ -372,6 +443,16 @@ function aiChatbotConfigPosition() {{
 #ai-chatbot-widget.ai-chatbot-position-bottom-left {
     left: 20px;
     bottom: 20px;
+}
+
+#ai-chatbot-widget.ai-chatbot-position-top-right {
+    right: 20px;
+    top: 20px;
+}
+
+#ai-chatbot-widget.ai-chatbot-position-top-left {
+    left: 20px;
+    top: 20px;
 }
 
 #ai-chatbot-toggle {
@@ -612,7 +693,7 @@ async def login(
 
 
 @app.get("/api/auth/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
+async def get_me(current_user: User = Depends(get_current_user_from_db)):
     """Get current user info."""
     return current_user
 
@@ -622,7 +703,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
 async def list_agents(
     skip: int = 0,
     limit: int = 100,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """List all agents for current user."""
@@ -636,7 +717,7 @@ async def list_agents(
 @app.post("/api/agents", response_model=AgentResponse)
 async def create_agent(
     agent_data: AgentCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Create a new agent."""
@@ -683,7 +764,7 @@ async def create_agent(
 @app.get("/api/agents/{agent_id}", response_model=AgentDetailResponse)
 async def get_agent(
     agent_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Get agent details."""
@@ -710,7 +791,7 @@ async def get_agent(
 async def update_agent(
     agent_id: int,
     agent_data: AgentUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Update an agent."""
@@ -741,7 +822,7 @@ async def update_agent(
 @app.delete("/api/agents/{agent_id}")
 async def delete_agent(
     agent_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Delete an agent."""
@@ -773,7 +854,7 @@ async def upload_document(
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None),
     text: Optional[str] = Form(None),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Upload a document for agent training."""
@@ -787,22 +868,33 @@ async def upload_document(
         raise HTTPException(status_code=404, detail="Agent not found")
     
     processor = get_document_processor()
+    file_size = 0
     
     # Handle different input types
     if file:
-        # Save uploaded file
-        upload_dir = f"./uploads/{current_user.id}/{agent_id}"
-        os.makedirs(upload_dir, exist_ok=True)
-        
-        file_path = f"{upload_dir}/{file.filename}"
-        with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-        
-        # Process file
-        result = processor.process_file(file_path, file.filename)
-        file_type = processor.get_file_type(file.filename)
-        original_filename = file.filename
+        original_filename = Path(file.filename or "uploaded_file").name
+        file_type = processor.get_file_type(original_filename)
+        if not file_type:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {original_filename}")
+
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+        file_size = len(content)
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(original_filename).suffix) as tmp:
+                tmp.write(content)
+                temp_path = tmp.name
+
+            # Process from a temporary runtime path (works in serverless /tmp).
+            result = processor.process_file(temp_path, original_filename)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
+
+        file_path = f"upload://{current_user.id}/{agent_id}/{original_filename}"
         
     elif url:
         # Process URL
@@ -810,6 +902,7 @@ async def upload_document(
         file_path = url
         file_type = "url"
         original_filename = url.split('/')[-1] or "web_content"
+        file_size = int(result.get("metadata", {}).get("content_length", 0) or 0)
         
     elif text:
         # Process text input
@@ -817,6 +910,7 @@ async def upload_document(
         file_path = "text_input"
         file_type = "text"
         original_filename = "user_input.txt"
+        file_size = len(text.encode("utf-8"))
         
     else:
         raise HTTPException(
@@ -832,7 +926,7 @@ async def upload_document(
         original_filename=original_filename,
         file_path=file_path,
         file_type=file_type,
-        file_size=os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+        file_size=file_size,
         extracted_text=result["text"],
         content_metadata=result["metadata"],
         processing_status="completed"
@@ -851,7 +945,7 @@ async def upload_document(
 @app.get("/api/agents/{agent_id}/documents", response_model=list[DocumentResponse])
 async def list_documents(
     agent_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """List documents for an agent."""
@@ -866,7 +960,7 @@ async def list_documents(
 @app.delete("/api/documents/{document_id}")
 async def delete_document(
     document_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Delete a document."""
@@ -892,7 +986,7 @@ async def delete_document(
 @app.post("/api/agents/{agent_id}/train", response_model=TrainResponse)
 async def train_agent(
     agent_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Train agent on uploaded documents."""
@@ -924,21 +1018,17 @@ async def train_agent(
     try:
         # Get RAG service
         rag_service = get_rag_service()
-        
-        # Prepare documents for training
-        texts = []
-        metadatas = []
-        ids = []
-        
-        for doc in documents:
-            if doc.extracted_text:
-                texts.append(doc.extracted_text)
-                metadatas.append({
-                    "document_id": doc.id,
-                    "filename": doc.filename,
-                    "file_type": doc.file_type
-                })
-                ids.append(f"doc_{doc.id}")
+
+        texts, metadatas, ids = _build_training_payload(documents)
+        if not texts:
+            raise HTTPException(status_code=400, detail="No extractable text found in uploaded documents")
+
+        # Reset and re-train collection to avoid duplicate chunks on retrain.
+        try:
+            rag_service.delete_collection(agent.collection_name)
+        except Exception:
+            pass
+        rag_service.create_collection(agent.collection_name)
         
         # Add to RAG
         chunks_created = rag_service.add_documents(
@@ -963,6 +1053,11 @@ async def train_agent(
             "chunks_created": chunks_created
         }
         
+    except HTTPException:
+        agent.training_status = "failed"
+        agent.status = "error"
+        db.commit()
+        raise
     except Exception as e:
         agent.training_status = "failed"
         agent.status = "error"
@@ -975,7 +1070,7 @@ async def train_agent(
 @app.get("/api/agents/{agent_id}/training-status", response_model=TrainingStatusResponse)
 async def get_training_status(
     agent_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Get training status for an agent."""
@@ -998,7 +1093,7 @@ async def get_training_status(
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Chat with an agent."""
@@ -1015,6 +1110,8 @@ async def chat(
             status_code=400, 
             detail="Agent is not active. Please train the agent first."
         )
+
+    _ensure_agent_collection_populated(agent, db)
     
     # Create chatbot agent
     chatbot = create_chatbot_agent()
@@ -1066,6 +1163,8 @@ async def public_chat(
             detail="Agent is not active. Please train the agent first."
         )
 
+    _ensure_agent_collection_populated(agent, db)
+
     chatbot = create_chatbot_agent()
     config = {
         "agent_id": agent.id,
@@ -1095,7 +1194,7 @@ async def public_chat(
 async def test_agent(
     agent_id: int,
     request: AgentTestRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Test an agent with conversation or channel simulation mode."""
@@ -1113,6 +1212,8 @@ async def test_agent(
             detail="Agent is not active. Please train the agent first."
         )
 
+    _ensure_agent_collection_populated(agent, db)
+
     chatbot = create_chatbot_agent()
     session_id = request.session_id or f"test_{agent.agent_type}_{agent_id}"
     simulated_payload = None
@@ -1120,9 +1221,25 @@ async def test_agent(
     if request.mode == "simulation":
         if agent.agent_type == "whatsapp":
             simulated_payload = {
-                "From": "whatsapp:+10000000000",
-                "Body": request.message,
-                "MessageSid": f"SM_TEST_{agent_id}"
+                "object": "whatsapp_business_account",
+                "entry": [{
+                    "changes": [{
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "contacts": [{
+                                "profile": {"name": "Test User"},
+                                "wa_id": "923000000000"
+                            }],
+                            "messages": [{
+                                "from": "923000000000",
+                                "id": f"wamid.TEST_{agent_id}",
+                                "type": "text",
+                                "text": {"body": request.message}
+                            }]
+                        }
+                    }]
+                }]
             }
         elif agent.agent_type == "telegram":
             simulated_payload = {
@@ -1181,7 +1298,7 @@ async def test_agent(
 async def get_integration(
     agent_id: int,
     integration_type: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Get integration code for an agent."""
@@ -1196,7 +1313,12 @@ async def get_integration(
     webhook_url = f"{settings.API_URL}/api/agents/{agent_id}/webhook/{agent.agent_type}"
     
     if agent.agent_type == "whatsapp":
-        whatsapp_agent = create_whatsapp_agent()
+        whatsapp_agent = create_whatsapp_agent(
+            access_token=agent.config.get("whatsapp_access_token"),
+            phone_number_id=agent.config.get("whatsapp_phone_number_id"),
+            verify_token=agent.config.get("whatsapp_verify_token"),
+            allow_incomplete=True
+        )
         return whatsapp_agent.get_integration_snippet(agent_id, webhook_url)
         
     elif agent.agent_type == "telegram":
@@ -1252,7 +1374,7 @@ async def download_wordpress_plugin_zip(
     bot_name: Optional[str] = Query(default="AI Assistant"),
     launcher_label: Optional[str] = Query(default="Chat"),
     widget_position: Optional[str] = Query(default="bottom-right"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Generate and download a ready-to-upload WordPress plugin ZIP."""
@@ -1286,19 +1408,50 @@ async def download_wordpress_plugin_zip(
 
 
 # ============ WEBHOOKS ============
+@app.get("/api/agents/{agent_id}/webhook/whatsapp")
+async def whatsapp_verify_webhook(
+    agent_id: int,
+    hub_mode: Optional[str] = Query(default=None, alias="hub.mode"),
+    hub_verify_token: Optional[str] = Query(default=None, alias="hub.verify_token"),
+    hub_challenge: Optional[str] = Query(default=None, alias="hub.challenge"),
+    db: Session = Depends(get_db)
+):
+    """Verify WhatsApp webhook subscription from Meta."""
+    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    whatsapp_agent = create_whatsapp_agent(
+        access_token=agent.config.get("whatsapp_access_token"),
+        phone_number_id=agent.config.get("whatsapp_phone_number_id"),
+        verify_token=agent.config.get("whatsapp_verify_token")
+    )
+    challenge = whatsapp_agent.verify_webhook(hub_mode, hub_verify_token, hub_challenge)
+
+    if challenge is not None:
+        return HTMLResponse(content=challenge)
+
+    raise HTTPException(status_code=403, detail="Verification failed")
+
+
 @app.post("/api/agents/{agent_id}/webhook/whatsapp")
 async def whatsapp_webhook(
     agent_id: int,
-    request: Request,
+    data: dict,
     db: Session = Depends(get_db)
 ):
-    """Handle WhatsApp webhook from Twilio."""
+    """Handle incoming WhatsApp webhook events from Meta Cloud API."""
     agent = db.query(Agent).filter(Agent.id == agent_id).first()
     
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     
-    whatsapp_agent = create_whatsapp_agent()
+    whatsapp_agent = create_whatsapp_agent(
+        access_token=agent.config.get("whatsapp_access_token"),
+        phone_number_id=agent.config.get("whatsapp_phone_number_id"),
+        verify_token=agent.config.get("whatsapp_verify_token")
+    )
     
     config = {
         "agent_id": agent.id,
@@ -1306,8 +1459,8 @@ async def whatsapp_webhook(
         "system_prompt": agent.config.get("system_prompt")
     }
     
-    response = await whatsapp_agent.handle_webhook(request, config)
-    return HTMLResponse(content=response, media_type="application/xml")
+    result = await whatsapp_agent.handle_webhook(data, config)
+    return result
 
 
 @app.post("/api/agents/{agent_id}/webhook/telegram")
@@ -1388,7 +1541,7 @@ async def instagram_webhook(
 # ============ DASHBOARD ============
 @app.get("/api/dashboard", response_model=UserDashboard)
 async def get_dashboard(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user_from_db),
     db: Session = Depends(get_db)
 ):
     """Get user dashboard data."""

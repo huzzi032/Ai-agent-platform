@@ -117,59 +117,66 @@ add_action('wp_footer', 'add_ai_chatbot');
 
 ## WhatsApp Integration
 
-### Using Twilio
+### Using WhatsApp Cloud API
 
 ```python
 # whatsapp_bot.py
-from twilio.rest import Client
 import requests
 
 # Configuration
-TWILIO_ACCOUNT_SID = 'your_account_sid'
-TWILIO_AUTH_TOKEN = 'your_auth_token'
-TWILIO_PHONE_NUMBER = 'whatsapp:+14155238886'
+WHATSAPP_ACCESS_TOKEN = 'your_whatsapp_access_token'
+WHATSAPP_PHONE_NUMBER_ID = 'your_phone_number_id'
+VERIFY_TOKEN = 'your_custom_verify_token'
 API_URL = 'http://localhost:8000/api'
 AGENT_ID = 1
 
 def send_whatsapp_message(to_number, message):
-    """Send WhatsApp message via Twilio"""
-    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-    
-    message = client.messages.create(
-        from_=TWILIO_PHONE_NUMBER,
-        body=message,
-        to=f'whatsapp:{to_number}'
-    )
-    
-    return message.sid
+    """Send WhatsApp message via Cloud API"""
+    url = f'https://graph.facebook.com/v20.0/{WHATSAPP_PHONE_NUMBER_ID}/messages'
+    headers = {
+        'Authorization': f'Bearer {WHATSAPP_ACCESS_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+    payload = {
+        'messaging_product': 'whatsapp',
+        'to': to_number,
+        'type': 'text',
+        'text': {'body': message}
+    }
+    response = requests.post(url, headers=headers, json=payload, timeout=20)
+    response.raise_for_status()
+    return response.json()
 
-def handle_incoming_message(from_number, body):
-    """Handle incoming WhatsApp message"""
+def handle_incoming_message(payload):
+    """Forward incoming WhatsApp webhook payload to AI Agent Platform"""
     # Forward to AI Agent Platform
     response = requests.post(
         f'{API_URL}/agents/{AGENT_ID}/webhook/whatsapp',
-        data={
-            'From': f'whatsapp:{from_number}',
-            'Body': body
-        }
+        json=payload,
+        timeout=20
     )
-    
-    return response.text
+    return response.json()
 
 # Flask webhook handler
 from flask import Flask, request
 
 app = Flask(__name__)
 
+@app.route('/webhook/whatsapp', methods=['GET'])
+def verify_webhook():
+    mode = request.args.get('hub.mode')
+    token = request.args.get('hub.verify_token')
+    challenge = request.args.get('hub.challenge')
+
+    if mode == 'subscribe' and token == VERIFY_TOKEN:
+        return challenge, 200
+    return 'Verification failed', 403
+
 @app.route('/webhook/whatsapp', methods=['POST'])
-def webhook():
-    from_number = request.form.get('From', '').replace('whatsapp:', '')
-    body = request.form.get('Body', '')
-    
-    # Process with your agent
-    response = handle_incoming_message(from_number, body)
-    
-    return response
+def whatsapp_events():
+    payload = request.get_json(silent=True) or {}
+    response = handle_incoming_message(payload)
+    return response, 200
 
 if __name__ == '__main__':
     app.run(port=5000)
@@ -183,10 +190,11 @@ if __name__ == '__main__':
 ngrok http 5000
 ```
 
-2. Configure webhook in Twilio:
-   - Go to Twilio Console → Messaging → Settings → WhatsApp Sandbox Settings
-   - Set "When a message comes in" webhook URL
-   - URL: `https://your-ngrok-url/webhook/whatsapp`
+2. Configure webhook in Meta WhatsApp dashboard:
+    - Go to Meta Developers → App → WhatsApp → Configuration
+    - Callback URL: `https://your-ngrok-url/webhook/whatsapp`
+    - Verify Token: same value as `VERIFY_TOKEN`
+    - Subscribe to field: `messages`
 
 ---
 

@@ -14,6 +14,10 @@ const CreateAgent = () => {
     agent_type: '',
     description: '',
     config: {
+      phone_number: '',
+      whatsapp_phone_number_id: '',
+      whatsapp_access_token: '',
+      whatsapp_verify_token: '',
       system_prompt: 'You are a helpful AI assistant.',
       welcome_message: 'Hello! How can I help you today?',
       widget_color: '#4F46E5',
@@ -222,6 +226,72 @@ const CreateAgent = () => {
                         <option value="top-left">Top Left</option>
                       </select>
                     </div>
+                  </div>
+                </>
+              )}
+
+              {formData.agent_type === 'whatsapp' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      WhatsApp Business Number
+                    </label>
+                    <input
+                      type="text"
+                      name="config.phone_number"
+                      value={formData.config.phone_number}
+                      onChange={handleChange}
+                      className="input-field"
+                      placeholder="e.g., +923001234567"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Number users message. This is stored for agent-level configuration.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      WhatsApp Phone Number ID (optional override)
+                    </label>
+                    <input
+                      type="text"
+                      name="config.whatsapp_phone_number_id"
+                      value={formData.config.whatsapp_phone_number_id}
+                      onChange={handleChange}
+                      className="input-field"
+                      placeholder="Meta Phone Number ID"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      WhatsApp Verify Token (optional override)
+                    </label>
+                    <input
+                      type="text"
+                      name="config.whatsapp_verify_token"
+                      value={formData.config.whatsapp_verify_token}
+                      onChange={handleChange}
+                      className="input-field"
+                      placeholder="Custom verify token"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      WhatsApp Access Token (optional override)
+                    </label>
+                    <input
+                      type="password"
+                      name="config.whatsapp_access_token"
+                      value={formData.config.whatsapp_access_token}
+                      onChange={handleChange}
+                      className="input-field"
+                      placeholder="EAAG..."
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Leave empty to use backend environment variables.
+                    </p>
                   </div>
                 </>
               )}

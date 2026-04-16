@@ -1,5 +1,7 @@
 """Configuration settings for the AI Agent Platform."""
+import os
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
 from functools import lru_cache
 from typing import Optional
 from pathlib import Path
@@ -10,6 +12,8 @@ _env_path = Path(__file__).parent.parent.parent / ".env"
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    ENVIRONMENT: str = "development"
     
     # Database
     DATABASE_URL: str = "sqlite:///./ai_agent_platform.db"
@@ -23,11 +27,11 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
     
-    # Twilio WhatsApp
-    TWILIO_ACCOUNT_SID: Optional[str] = None
-    TWILIO_AUTH_TOKEN: Optional[str] = None
-    TWILIO_PHONE_NUMBER: Optional[str] = None
-    TWILIO_WEBHOOK_URL: Optional[str] = None
+    # WhatsApp Cloud API
+    WHATSAPP_ACCESS_TOKEN: Optional[str] = None
+    WHATSAPP_PHONE_NUMBER_ID: Optional[str] = None
+    WHATSAPP_VERIFY_TOKEN: Optional[str] = None
+    WHATSAPP_WEBHOOK_URL: Optional[str] = None
     
     # Telegram
     TELEGRAM_BOT_TOKEN: Optional[str] = None
@@ -52,13 +56,35 @@ class Settings(BaseSettings):
     APP_NAME: str = "AI Agent Platform"
     APP_URL: str = "http://localhost:3000"
     API_URL: str = "http://localhost:8000"
-    DEBUG: bool = True
+    DEBUG: bool = False
+
+    # CORS
+    CORS_ALLOWED_ORIGINS: str = "*"
     
     # Chroma
-    CHROMA_PERSIST_DIRECTORY: str = "./chroma_db"
+    CHROMA_PERSIST_DIRECTORY: str = os.getenv(
+        "CHROMA_PERSIST_DIRECTORY",
+        "/tmp/chroma_db" if os.getenv("VERCEL") else "./chroma_db"
+    )
     
     # Embeddings
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        """Return normalized CORS origins list from comma-separated env var."""
+        origins = [origin.strip() for origin in self.CORS_ALLOWED_ORIGINS.split(",") if origin.strip()]
+        return origins or ["*"]
+
+    @model_validator(mode="after")
+    def validate_production_settings(self):
+        """Enforce required secrets in production deployments."""
+        if self.ENVIRONMENT.lower() == "production":
+            if not self.SECRET_KEY or self.SECRET_KEY == "your-secret-key-change-in-production":
+                raise ValueError("SECRET_KEY must be set to a secure value in production")
+            if not self.DATABASE_URL:
+                raise ValueError("DATABASE_URL must be set in production")
+        return self
     
     class Config:
         env_file = str(_env_path) if _env_path.exists() else ".env"

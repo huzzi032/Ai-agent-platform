@@ -441,13 +441,13 @@ class ChatbotAgent:
         
         try {{
             // Call API
-            const response = await fetch(`${{CONFIG.apiUrl}}/api/chat`, {{
+            const response = await fetch(`${{CONFIG.apiUrl}}/api/public/agents/${{CONFIG.agentId}}/chat`, {{
                 method: 'POST',
                 headers: {{ 'Content-Type': 'application/json' }},
                 body: JSON.stringify({{
                     message: message,
                     agent_id: CONFIG.agentId,
-                    session_id: sessionId,
+                    external_id: sessionId,
                     conversation_id: conversationId
                 }})
             }});
@@ -457,16 +457,17 @@ class ChatbotAgent:
             // Hide typing
             showTyping(false);
             
-            if (data.success) {{
-                addMessage('bot', data.response);
-                
-                // Save conversation ID
-                if (data.conversation_id) {{
-                    conversationId = data.conversation_id;
-                    localStorage.setItem('chatConversation{agent_id}', conversationId);
-                }}
-            }} else {{
-                addMessage('bot', 'Sorry, I encountered an error. Please try again.');
+            if (!response.ok) {{
+                addMessage('bot', data.detail || 'Sorry, I encountered an error. Please try again.');
+                return;
+            }}
+
+            addMessage('bot', data.response || 'No response received.');
+
+            // Save conversation ID
+            if (data.conversation_id) {{
+                conversationId = data.conversation_id;
+                localStorage.setItem('chatConversation{agent_id}', conversationId);
             }}
         }} catch (error) {{
             showTyping(false);
@@ -511,7 +512,7 @@ class ChatbotAgent:
                     "description": "Use the REST API directly",
                     "code": f'''// JavaScript API Client
 const chatbot = {{
-    apiUrl: "{api_url}/api/chat",
+    apiUrl: "{api_url}/api/public/agents/{agent_id}/chat",
     agentId: {agent_id},
     sessionId: "your_session_id",
     
@@ -522,7 +523,7 @@ const chatbot = {{
             body: JSON.stringify({{
                 message: message,
                 agent_id: this.agentId,
-                session_id: this.sessionId
+                external_id: this.sessionId
             }})
         }});
         return await response.json();
@@ -534,7 +535,7 @@ chatbot.sendMessage("Hello!").then(response => {{
     console.log(response.response);
 }});
 ''',
-                    "endpoint": f"{api_url}/api/chat",
+                    "endpoint": f"{api_url}/api/public/agents/{agent_id}/chat",
                     "method": "POST",
                     "headers": {
                         "Content-Type": "application/json"
@@ -542,7 +543,7 @@ chatbot.sendMessage("Hello!").then(response => {{
                     "body": {
                         "message": "string",
                         "agent_id": agent_id,
-                        "session_id": "string (optional)",
+                        "external_id": "string (optional)",
                         "conversation_id": "integer (optional)"
                     }
                 },
@@ -563,17 +564,17 @@ const ChatbotWidget = () => {{
   const sendMessage = async () => {{
     if (!input.trim()) return;
     
-    setMessages(prev => [...prev, {{ role: 'user', text: input }}]);
-    
-    const response = await fetch('{api_url}/api/chat', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{
-        message: input,
-        agent_id: {agent_id},
-        session_id: sessionId
-      }})
-    }});
+        setMessages(prev => [...prev, {{ role: 'user', text: input }}]);
+
+        const response = await fetch('{api_url}/api/public/agents/{agent_id}/chat', {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{
+                message: input,
+                agent_id: {agent_id},
+                external_id: sessionId
+            }})
+        }});
     
     const data = await response.json();
     setMessages(prev => [...prev, {{ role: 'bot', text: data.response }}]);

@@ -75,7 +75,7 @@ def decode_token(token: str) -> Optional[dict]:
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: Session = Depends(lambda: None)  # Will be overridden
+    db: Optional[Session] = None
 ) -> User:
     """Get current user from token."""
     credentials_exception = HTTPException(
@@ -94,20 +94,21 @@ async def get_current_user(
     if username is None:
         raise credentials_exception
     
-    # Get user from database
-    # Note: This requires db session which should be injected properly
-    # For now, we'll create a placeholder that will be properly handled in main.py
-    
-    # This is a simplified version - in production, properly inject db session
-    from models.database import SessionLocal
-    db = SessionLocal()
+    # Prefer caller-provided DB session (e.g. from app.main.get_db).
+    owns_session = False
+    if db is None:
+        from models.database import SessionLocal
+        db = SessionLocal()
+        owns_session = True
+
     try:
         user = db.query(User).filter(User.username == username).first()
         if user is None:
             raise credentials_exception
         return user
     finally:
-        db.close()
+        if owns_session:
+            db.close()
 
 
 def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:

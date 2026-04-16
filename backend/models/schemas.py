@@ -70,6 +70,9 @@ class AgentConfig(BaseModel):
     """Agent-specific configuration."""
     # WhatsApp
     phone_number: Optional[str] = None
+    whatsapp_phone_number_id: Optional[str] = None
+    whatsapp_access_token: Optional[str] = None
+    whatsapp_verify_token: Optional[str] = None
     
     # Telegram
     bot_token: Optional[str] = None
@@ -291,11 +294,8 @@ class WidgetConfigResponse(BaseModel):
 
 # ============ WEBHOOK SCHEMAS ============
 class WhatsAppWebhook(BaseModel):
-    From: str
-    Body: str
-    MessageSid: Optional[str] = None
-    NumMedia: Optional[int] = 0
-    MediaUrl0: Optional[str] = None
+    object: Optional[str] = None
+    entry: Optional[List[Dict[str, Any]]] = None
 
 
 class TelegramWebhook(BaseModel):

@@ -1,10 +1,8 @@
-"""WhatsApp Agent using Twilio API."""
+"""WhatsApp Agent using WhatsApp Business Cloud API."""
 import os
 import logging
-from typing import Dict, Any, Optional
-from twilio.rest import Client
-from twilio.twiml.messaging_response import MessagingResponse
-from fastapi import Request
+from typing import Dict, Any, Optional, List
+import httpx
 
 from services.rag_service import get_rag_service
 from models.database import SessionLocal, Conversation, Message
@@ -14,213 +12,285 @@ logger = logging.getLogger(__name__)
 
 
 class WhatsAppAgent:
-    """WhatsApp Agent for handling WhatsApp messages via Twilio."""
+    """WhatsApp Agent for handling messages via Meta WhatsApp Cloud API."""
     
     def __init__(
-        self, 
-        account_sid: str, 
-        auth_token: str, 
-        phone_number: str,
-        groq_api_key: str
+        self,
+        access_token: str,
+        phone_number_id: str,
+        verify_token: str,
+        groq_api_key: str,
+        api_version: str = "v20.0"
     ):
         """Initialize WhatsApp agent."""
-        self.account_sid = account_sid
-        self.auth_token = auth_token
-        self.phone_number = phone_number
-        self.client = Client(account_sid, auth_token)
+        self.access_token = access_token
+        self.phone_number_id = phone_number_id
+        self.verify_token = verify_token
+        self.graph_api_base = f"https://graph.facebook.com/{api_version}"
         self.rag_service = get_rag_service(groq_api_key)
-        
-        logger.info(f"WhatsApp Agent initialized with number: {phone_number}")
+
+        logger.info(f"WhatsApp Cloud Agent initialized with phone_number_id: {phone_number_id}")
+
+    @staticmethod
+    def _normalize_phone_number(number: str) -> str:
+        """Normalize phone number for WhatsApp Cloud API."""
+        if not number:
+            return ""
+
+        cleaned = "".join(ch for ch in number if ch.isdigit())
+        return cleaned
     
     def send_message(self, to_number: str, message: str) -> Dict[str, Any]:
-        """Send a WhatsApp message."""
+        """Send a WhatsApp message using Cloud API."""
         try:
-            # Format number for WhatsApp
-            if not to_number.startswith("whatsapp:"):
-                to_number = f"whatsapp:{to_number}"
-            
-            from_number = f"whatsapp:{self.phone_number}"
-            
-            message = self.client.messages.create(
-                from_=from_number,
-                body=message,
-                to=to_number
-            )
-            
-            logger.info(f"Message sent to {to_number}: {message.sid}")
-            
+            if not self.access_token or not self.phone_number_id:
+                raise ValueError("WhatsApp Cloud credentials are not configured")
+
+            recipient = self._normalize_phone_number(to_number)
+            if not recipient:
+                raise ValueError("Invalid recipient phone number")
+
+            url = f"{self.graph_api_base}/{self.phone_number_id}/messages"
+            headers = {
+                "Authorization": f"Bearer {self.access_token}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "messaging_product": "whatsapp",
+                "to": recipient,
+                "type": "text",
+                "text": {"body": message}
+            }
+
+            response = httpx.post(url, headers=headers, json=payload, timeout=20.0)
+            response.raise_for_status()
+            result = response.json()
+
+            message_id = None
+            messages = result.get("messages") or []
+            if messages:
+                message_id = messages[0].get("id")
+
+            logger.info(f"WhatsApp message sent to {recipient}: {message_id}")
+
             return {
                 "success": True,
-                "message_sid": message.sid,
-                "status": message.status
+                "message_id": message_id,
+                "raw": result
             }
-            
+
         except Exception as e:
             logger.error(f"Error sending WhatsApp message: {e}")
             return {
                 "success": False,
                 "error": str(e)
             }
-    
+
+    def _extract_messages(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract incoming text messages from WhatsApp Cloud webhook payload."""
+        incoming_messages: List[Dict[str, Any]] = []
+
+        for entry in data.get("entry", []):
+            for change in entry.get("changes", []):
+                value = change.get("value", {})
+
+                contacts = value.get("contacts") or []
+                contact_name = ""
+                if contacts:
+                    contact_name = contacts[0].get("profile", {}).get("name", "")
+
+                for msg in value.get("messages", []):
+                    if msg.get("type") != "text":
+                        continue
+
+                    text_body = msg.get("text", {}).get("body", "").strip()
+                    sender_wa_id = msg.get("from", "")
+
+                    if not text_body or not sender_wa_id:
+                        continue
+
+                    incoming_messages.append({
+                        "from": sender_wa_id,
+                        "name": contact_name,
+                        "text": text_body,
+                        "message_id": msg.get("id")
+                    })
+
+        return incoming_messages
+
     async def handle_webhook(
-        self, 
-        request: Request, 
+        self,
+        data: Dict[str, Any],
         agent_config: Dict[str, Any]
-    ) -> str:
-        """Handle incoming webhook from Twilio."""
+    ) -> Dict[str, Any]:
+        """Handle incoming webhook from WhatsApp Cloud API."""
         try:
-            # Parse form data from Twilio
-            form_data = await request.form()
-            data = dict(form_data)
-            
-            from_number = data.get("From", "").replace("whatsapp:", "")
-            body = data.get("Body", "").strip()
-            message_sid = data.get("MessageSid", "")
-            num_media = int(data.get("NumMedia", 0))
-            
-            logger.info(f"Received message from {from_number}: {body[:100]}...")
-            
-            # Get agent settings
+            messages = self._extract_messages(data)
+            if not messages:
+                return {"success": True, "processed_messages": 0}
+
             collection_name = agent_config.get("collection_name")
             system_prompt = agent_config.get("system_prompt", "You are a helpful WhatsApp assistant.")
-            
-            # Get or create conversation
+
             db = SessionLocal()
             try:
-                conversation = db.query(Conversation).filter(
-                    Conversation.agent_id == agent_config["agent_id"],
-                    Conversation.external_id == from_number,
-                    Conversation.platform == "whatsapp"
-                ).first()
-                
-                if not conversation:
-                    conversation = Conversation(
-                        agent_id=agent_config["agent_id"],
-                        external_id=from_number,
-                        platform="whatsapp",
-                        title=f"WhatsApp: {from_number}"
+                for incoming in messages:
+                    from_number = incoming["from"]
+                    body = incoming["text"]
+                    message_id = incoming.get("message_id")
+                    display_name = incoming.get("name") or from_number
+
+                    logger.info(f"Received WhatsApp message from {from_number}: {body[:100]}...")
+
+                    conversation = db.query(Conversation).filter(
+                        Conversation.agent_id == agent_config["agent_id"],
+                        Conversation.external_id == from_number,
+                        Conversation.platform == "whatsapp"
+                    ).first()
+
+                    if not conversation:
+                        conversation = Conversation(
+                            agent_id=agent_config["agent_id"],
+                            external_id=from_number,
+                            platform="whatsapp",
+                            title=f"WhatsApp: {display_name}",
+                            extra_data={"wa_id": from_number, "name": display_name}
+                        )
+                        db.add(conversation)
+                        db.commit()
+                        db.refresh(conversation)
+
+                    user_message = Message(
+                        conversation_id=conversation.id,
+                        role="user",
+                        content=body,
+                        message_type="text",
+                        extra_data={"message_id": message_id, "wa_id": from_number}
                     )
-                    db.add(conversation)
+                    db.add(user_message)
+
+                    chat_history = []
+                    for msg in conversation.messages[-10:]:
+                        chat_history.append({
+                            "role": msg.role,
+                            "content": msg.content
+                        })
+
+                    if collection_name:
+                        result = self.rag_service.query(
+                            collection_name=collection_name,
+                            query=body,
+                            system_prompt=system_prompt,
+                            chat_history=chat_history
+                        )
+                        response_text = result["response"]
+                    else:
+                        response_text = "Hello! I'm not fully trained yet. Please upload documents and train me first."
+
+                    assistant_message = Message(
+                        conversation_id=conversation.id,
+                        role="assistant",
+                        content=response_text,
+                        message_type="text",
+                        rag_context={"sources": result.get("sources", [])} if collection_name else None
+                    )
+                    db.add(assistant_message)
                     db.commit()
-                    db.refresh(conversation)
-                
-                # Save user message
-                user_message = Message(
-                    conversation_id=conversation.id,
-                    role="user",
-                    content=body,
-                    message_type="text",
-                    extra_data={"message_sid": message_sid}
-                )
-                db.add(user_message)
-                
-                # Get chat history
-                chat_history = []
-                for msg in conversation.messages[-10:]:
-                    chat_history.append({
-                        "role": msg.role,
-                        "content": msg.content
-                    })
-                
-                # Generate response using RAG
-                if collection_name:
-                    result = self.rag_service.query(
-                        collection_name=collection_name,
-                        query=body,
-                        system_prompt=system_prompt,
-                        chat_history=chat_history
-                    )
-                    response_text = result["response"]
-                else:
-                    response_text = "Hello! I'm not fully trained yet. Please upload documents and train me first."
-                
-                # Save assistant message
-                assistant_message = Message(
-                    conversation_id=conversation.id,
-                    role="assistant",
-                    content=response_text,
-                    message_type="text",
-                    rag_context={"sources": result.get("sources", [])} if collection_name else None
-                )
-                db.add(assistant_message)
-                db.commit()
-                
-                # Create Twilio response
-                twiml = MessagingResponse()
-                twiml.message(response_text)
-                
-                return str(twiml)
-                
+
+                    send_result = self.send_message(from_number, response_text)
+                    if not send_result.get("success"):
+                        logger.error(
+                            "Failed to send WhatsApp response to %s: %s",
+                            from_number,
+                            send_result.get("error")
+                        )
+
+                return {"success": True, "processed_messages": len(messages)}
+
             finally:
                 db.close()
-                
+
         except Exception as e:
             logger.error(f"Error handling WhatsApp webhook: {e}")
-            twiml = MessagingResponse()
-            twiml.message("Sorry, I encountered an error. Please try again.")
-            return str(twiml)
-    
+            return {"success": False, "error": str(e)}
+
     def get_integration_snippet(self, agent_id: int, webhook_url: str) -> Dict[str, Any]:
         """Get integration code snippet for WhatsApp."""
         return {
             "type": "whatsapp",
             "setup_steps": [
-                "1. Create a Twilio account at https://www.twilio.com/try-twilio",
-                "2. Get a WhatsApp-enabled phone number from Twilio",
-                "3. Configure the webhook URL in Twilio Console:",
-                f"   URL: {webhook_url}",
-                "4. Set the webhook for incoming messages",
-                "5. Add your Twilio credentials to the .env file"
+                "1. Create a Meta Developer account at https://developers.facebook.com/",
+                "2. Create a Business app and add the WhatsApp product",
+                "3. In WhatsApp > API Setup, copy Access Token and Phone Number ID",
+                "4. Configure Webhook in Meta dashboard:",
+                f"   Callback URL: {webhook_url}",
+                "5. Set Verify Token to match WHATSAPP_VERIFY_TOKEN",
+                "6. Subscribe webhook field: messages",
+                "7. Save credentials in .env"
             ],
-            "code_snippet": f'''# WhatsApp Integration for Agent {agent_id}
-# Using Twilio API
+            "code_snippet": f'''# WhatsApp Cloud API Integration for Agent {agent_id}
+import requests
 
-from twilio.rest import Client
+ACCESS_TOKEN = "your_whatsapp_access_token"
+PHONE_NUMBER_ID = "your_whatsapp_phone_number_id"
 
-# Initialize client
-client = Client(
-    "your_twilio_account_sid",
-    "your_twilio_auth_token"
-)
+def send_whatsapp_message(to_number: str, text: str):
+    url = f"https://graph.facebook.com/v20.0/{{PHONE_NUMBER_ID}}/messages"
+    headers = {{
+        "Authorization": f"Bearer {{ACCESS_TOKEN}}",
+        "Content-Type": "application/json"
+    }}
+    payload = {{
+        "messaging_product": "whatsapp",
+        "to": to_number,
+        "type": "text",
+        "text": {{"body": text}}
+    }}
+    response = requests.post(url, headers=headers, json=payload, timeout=20)
+    response.raise_for_status()
+    return response.json()
 
-# Send message
-message = client.messages.create(
-    from_="whatsapp:your_twilio_number",
-    body="Hello from AI Agent!",
-    to="whatsapp:recipient_number"
-)
-
-print(f"Message sent: {{message.sid}}")
+result = send_whatsapp_message("923001234567", "Hello from AI Agent!")
+print(result)
 ''',
             "webhook_url": webhook_url,
             "api_endpoint": f"/api/agents/{agent_id}/webhook/whatsapp",
             "requirements": [
-                "Twilio Account",
-                "WhatsApp-enabled phone number",
-                "Webhook URL configured"
+                "Meta Developer App (Business type)",
+                "WhatsApp Cloud Access Token",
+                "WhatsApp Phone Number ID",
+                "Webhook URL with HTTPS",
+                "Matching Verify Token"
             ]
         }
-    
-    def verify_webhook(self, request: Request) -> bool:
-        """Verify Twilio webhook signature."""
-        # In production, implement proper signature verification
-        # https://www.twilio.com/docs/usage/security#validating-requests
-        return True
+
+    def verify_webhook(self, mode: Optional[str], token: Optional[str], challenge: Optional[str]) -> Optional[str]:
+        """Verify webhook subscription from Meta."""
+        if mode == "subscribe" and token == self.verify_token:
+            logger.info("WhatsApp webhook verified successfully")
+            return challenge
+        return None
 
 
 def create_whatsapp_agent(
-    account_sid: str = None,
-    auth_token: str = None,
-    phone_number: str = None,
-    groq_api_key: str = None
+    access_token: str = None,
+    phone_number_id: str = None,
+    verify_token: str = None,
+    groq_api_key: str = None,
+    allow_incomplete: bool = False
 ) -> WhatsAppAgent:
     """Factory function to create WhatsApp agent."""
-    account_sid = account_sid or os.getenv("TWILIO_ACCOUNT_SID")
-    auth_token = auth_token or os.getenv("TWILIO_AUTH_TOKEN")
-    phone_number = phone_number or os.getenv("TWILIO_PHONE_NUMBER")
+    access_token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN")
+    phone_number_id = phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    verify_token = verify_token or os.getenv("WHATSAPP_VERIFY_TOKEN")
     groq_api_key = groq_api_key or os.getenv("GROQ_API_KEY")
-    
-    if not all([account_sid, auth_token, phone_number]):
-        raise ValueError("Twilio credentials not configured")
-    
-    return WhatsAppAgent(account_sid, auth_token, phone_number, groq_api_key)
+
+    if not allow_incomplete and not all([access_token, phone_number_id, verify_token]):
+        raise ValueError("WhatsApp Cloud credentials not configured")
+
+    return WhatsAppAgent(
+        access_token=access_token or "",
+        phone_number_id=phone_number_id or "",
+        verify_token=verify_token or "",
+        groq_api_key=groq_api_key
+    )

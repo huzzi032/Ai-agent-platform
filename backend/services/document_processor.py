@@ -2,6 +2,7 @@
 import os
 import io
 import re
+import tempfile
 import requests
 from typing import Optional, Dict, Any
 from pathlib import Path
@@ -92,12 +93,17 @@ class DocumentProcessor:
                 text = self._extract_text_from_html(response.text)
             elif 'application/pdf' in content_type:
                 # Save to temp file and process
-                temp_path = f"/tmp/temp_pdf_{os.urandom(4).hex()}.pdf"
-                with open(temp_path, 'wb') as f:
-                    f.write(response.content)
-                result = self._process_pdf(temp_path, "downloaded.pdf")
-                os.remove(temp_path)
-                return result
+                temp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                        tmp.write(response.content)
+                        temp_path = tmp.name
+
+                    result = self._process_pdf(temp_path, "downloaded.pdf")
+                    return result
+                finally:
+                    if temp_path and os.path.exists(temp_path):
+                        os.remove(temp_path)
             else:
                 text = response.text
             

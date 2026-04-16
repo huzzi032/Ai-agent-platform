@@ -17,6 +17,16 @@ import {
 import { agentsAPI, integrationAPI } from '../services/api';
 import toast from 'react-hot-toast';
 
+const getPublicApiBaseUrl = () => {
+  const configured = process.env.REACT_APP_API_URL || 'http://localhost:8000/api';
+  return configured.replace(/\/api\/?$/, '');
+};
+
+const normalizeWidgetPosition = (value) => {
+  const validPositions = ['bottom-right', 'bottom-left', 'top-right', 'top-left'];
+  return validPositions.includes(value) ? value : 'bottom-right';
+};
+
 const Integration = () => {
   const { id } = useParams();
   const [agent, setAgent] = useState(null);
@@ -25,7 +35,7 @@ const Integration = () => {
   const [copied, setCopied] = useState(false);
   const [downloadingPlugin, setDownloadingPlugin] = useState(false);
   const [wpConfig, setWpConfig] = useState({
-    api_url: process.env.REACT_APP_API_URL || 'http://localhost:8000',
+    api_url: getPublicApiBaseUrl(),
     primary_color: '#4F46E5',
     welcome_message: 'Hello! How can I help you today?',
     bot_name: 'AI Assistant',
@@ -48,12 +58,12 @@ const Integration = () => {
 
       const config = agentRes?.data?.config || {};
       setWpConfig({
-        api_url: process.env.REACT_APP_API_URL || 'http://localhost:8000',
+        api_url: getPublicApiBaseUrl(),
         primary_color: config.widget_color || '#4F46E5',
         welcome_message: config.welcome_message || 'Hello! How can I help you today?',
         bot_name: agentRes?.data?.name || 'AI Assistant',
         launcher_label: 'Chat',
-        widget_position: config.widget_position || 'bottom-right',
+        widget_position: normalizeWidgetPosition(config.widget_position),
       });
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -307,6 +317,8 @@ const Integration = () => {
               >
                 <option value="bottom-right">Bottom Right</option>
                 <option value="bottom-left">Bottom Left</option>
+                <option value="top-right">Top Right</option>
+                <option value="top-left">Top Left</option>
               </select>
             </div>
           </div>

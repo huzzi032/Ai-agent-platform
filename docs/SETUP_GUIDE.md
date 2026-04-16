@@ -111,24 +111,32 @@ SECRET_KEY=your_generated_key_here
 
 #### For WhatsApp Agent
 
-1. **Sign up for Twilio**
-   - Go to [https://www.twilio.com/try-twilio](https://www.twilio.com/try-twilio)
-   - Complete the registration
+1. **Create Meta Developer Account**
+   - Go to [https://developers.facebook.com/](https://developers.facebook.com/)
+   - Log in with your Facebook account
 
-2. **Get WhatsApp Number**
-   - In Twilio Console, go to "Messaging" → "Try it out" → "Send a WhatsApp message"
-   - Join the sandbox by sending the code from your WhatsApp
+2. **Create a Business App**
+   - Click "Create App"
+   - Choose app type: **Business**
 
-3. **Get Credentials**
-   - Account SID: Found on the main dashboard
-   - Auth Token: Click "Show" on the main dashboard
-   - Phone Number: Your sandbox number (e.g., +14155238886)
+3. **Add WhatsApp Product**
+   - In app dashboard, click "Add Product"
+   - Select **WhatsApp**
 
-4. **Add to `.env`**:
+4. **Get Credentials from API Setup**
+   - Access Token (temporary for dev, permanent via System User for production)
+   - Phone Number ID
+
+5. **Configure Webhook**
+   - Callback URL: `https://your-domain.com/api/agents/{agent_id}/webhook/whatsapp`
+   - Verify Token: any secure custom string
+   - Subscribe to field: `messages`
+
+6. **Add to `.env`**:
    ```
-   TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-   TWILIO_AUTH_TOKEN=your_auth_token_here
-   TWILIO_PHONE_NUMBER=+14155238886
+   WHATSAPP_ACCESS_TOKEN=your_access_token_here
+   WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id_here
+   WHATSAPP_VERIFY_TOKEN=your_custom_verify_token
    ```
 
 #### For Telegram Agent
@@ -211,9 +219,9 @@ GROQ_API_KEY=gsk_your_groq_api_key
 SECRET_KEY=your_generated_secret_key
 
 # Optional - Only if using specific agents
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxx
-TWILIO_AUTH_TOKEN=xxxxxxxxxxxx
-TWILIO_PHONE_NUMBER=+14155238886
+WHATSAPP_ACCESS_TOKEN=EAAGxxxxxxxxxx
+WHATSAPP_PHONE_NUMBER_ID=123456789012345
+WHATSAPP_VERIFY_TOKEN=your_custom_verify_token
 
 TELEGRAM_BOT_TOKEN=123456789:ABCdef...
 
