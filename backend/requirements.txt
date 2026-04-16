@@ -15,9 +15,7 @@ langchain==0.1.0
 langchain-community==0.0.13
 langchain-groq==0.0.1
 chromadb==0.4.22
-sentence-transformers==2.2.2
 pypdf==4.0.0
-unstructured==0.18.32
 python-magic==0.4.27
 
 # API Clients
