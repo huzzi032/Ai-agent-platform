@@ -131,11 +131,6 @@ class AgentResponse(AgentBase):
         from_attributes = True
 
 
-class AgentDetailResponse(AgentResponse):
-    documents: List["DocumentResponse"] = []
-    conversation_count: int = 0
-
-
 # ============ DOCUMENT SCHEMAS ============
 class DocumentBase(BaseModel):
     filename: str
@@ -163,6 +158,11 @@ class DocumentResponse(DocumentBase):
 class DocumentUploadResponse(BaseModel):
     document: DocumentResponse
     message: str
+
+
+class AgentDetailResponse(AgentResponse):
+    documents: List[DocumentResponse] = []
+    conversation_count: int = 0
 
 
 # ============ TRAINING SCHEMAS ============
