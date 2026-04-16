@@ -49,28 +49,13 @@ def _create_text_splitter(
     length_function=len,
     separators=None,
 ):
-    """Create splitter with lazy optional import to prevent startup import crashes."""
-    try:
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-        return RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            length_function=length_function,
-            separators=separators,
-        )
-    except Exception as exc:
-        logger = logging.getLogger(__name__)
-        logger.warning(
-            "langchain_text_splitters unavailable (%s). Falling back to basic splitter.",
-            exc,
-        )
-        return _BasicRecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-            length_function=length_function,
-            separators=separators,
-        )
+    """Create text splitter without optional third-party imports for serverless stability."""
+    return _BasicRecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=length_function,
+        separators=separators,
+    )
 
 
 logging.basicConfig(level=logging.INFO)
