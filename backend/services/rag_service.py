@@ -7,48 +7,70 @@ from typing import List, Dict, Any, Optional
 import chromadb
 import requests
 
-try:
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-except Exception as exc:
-    logger = logging.getLogger(__name__)
-    logger.warning(
-        "langchain_text_splitters unavailable (%s). Falling back to basic splitter.",
-        exc,
-    )
 
-    class RecursiveCharacterTextSplitter:  # type: ignore[override]
-        """Minimal fallback splitter to avoid startup crashes in constrained runtimes."""
+class _BasicRecursiveCharacterTextSplitter:
+    """Minimal fallback splitter to avoid startup crashes in constrained runtimes."""
 
-        def __init__(
-            self,
-            chunk_size: int = 1000,
-            chunk_overlap: int = 200,
-            length_function=len,
-            separators=None,
-        ):
-            self.chunk_size = max(1, int(chunk_size))
-            self.chunk_overlap = max(0, int(chunk_overlap))
-            self.length_function = length_function
+    def __init__(
+        self,
+        chunk_size: int = 1000,
+        chunk_overlap: int = 200,
+        length_function=len,
+        separators=None,
+    ):
+        self.chunk_size = max(1, int(chunk_size))
+        self.chunk_overlap = max(0, int(chunk_overlap))
+        self.length_function = length_function
 
-        def split_text(self, text: str) -> List[str]:
-            if not text:
-                return []
+    def split_text(self, text: str) -> List[str]:
+        if not text:
+            return []
 
-            if self.length_function(text) <= self.chunk_size:
-                return [text]
+        if self.length_function(text) <= self.chunk_size:
+            return [text]
 
-            chunks: List[str] = []
-            start = 0
-            text_len = len(text)
+        chunks: List[str] = []
+        start = 0
+        text_len = len(text)
 
-            while start < text_len:
-                end = min(text_len, start + self.chunk_size)
-                chunks.append(text[start:end])
-                if end >= text_len:
-                    break
-                start = max(end - self.chunk_overlap, start + 1)
+        while start < text_len:
+            end = min(text_len, start + self.chunk_size)
+            chunks.append(text[start:end])
+            if end >= text_len:
+                break
+            start = max(end - self.chunk_overlap, start + 1)
 
-            return chunks
+        return chunks
+
+
+def _create_text_splitter(
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+    length_function=len,
+    separators=None,
+):
+    """Create splitter with lazy optional import to prevent startup import crashes."""
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+        return RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=length_function,
+            separators=separators,
+        )
+    except Exception as exc:
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "langchain_text_splitters unavailable (%s). Falling back to basic splitter.",
+            exc,
+        )
+        return _BasicRecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=length_function,
+            separators=separators,
+        )
 
 
 logging.basicConfig(level=logging.INFO)
@@ -105,7 +127,7 @@ class RAGService:
         groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
         self.llm = self._build_llm(groq_api_key, groq_model)
 
-        self.text_splitter = RecursiveCharacterTextSplitter(
+        self.text_splitter = _create_text_splitter(
             chunk_size=1000,
             chunk_overlap=200,
             length_function=len,
