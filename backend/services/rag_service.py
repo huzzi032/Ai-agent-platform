@@ -1,15 +1,50 @@
 """RAG (Retrieval Augmented Generation) service backed by Chroma and Groq."""
 import os
 import logging
+from types import SimpleNamespace
 from typing import List, Dict, Any, Optional
 
 import chromadb
-from langchain_groq import ChatGroq
+import requests
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class _DirectGroqLLM:
+    """Lightweight Groq client that matches the minimal invoke().content contract."""
+
+    def __init__(self, api_key: str, model_name: str, temperature: float, max_tokens: int):
+        self.api_key = api_key
+        self.model_name = model_name
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+
+    def invoke(self, prompt: str):
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY is not configured")
+
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self.model_name,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            },
+            timeout=45,
+        )
+        response.raise_for_status()
+
+        data = response.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return SimpleNamespace(content=content)
 
 
 class RAGService:
@@ -26,12 +61,7 @@ class RAGService:
         self.chroma_client = chromadb.PersistentClient(path=persist_directory)
 
         groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-        self.llm = ChatGroq(
-            groq_api_key=groq_api_key,
-            model_name=groq_model,
-            temperature=0.7,
-            max_tokens=4096,
-        )
+        self.llm = self._build_llm(groq_api_key, groq_model)
 
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
@@ -41,6 +71,29 @@ class RAGService:
         )
 
         logger.info("RAG Service initialized successfully")
+
+    def _build_llm(self, groq_api_key: str, model_name: str):
+        """Build LLM client with a safe fallback when LangChain import chain breaks."""
+        try:
+            from langchain_groq import ChatGroq
+
+            return ChatGroq(
+                groq_api_key=groq_api_key,
+                model_name=model_name,
+                temperature=0.7,
+                max_tokens=4096,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ChatGroq unavailable (%s). Falling back to direct Groq HTTP client.",
+                exc,
+            )
+            return _DirectGroqLLM(
+                api_key=groq_api_key,
+                model_name=model_name,
+                temperature=0.7,
+                max_tokens=4096,
+            )
 
     def _get_collection(self, collection_name: str, create_if_missing: bool = True):
         """Get collection and optionally create it if it does not exist."""
