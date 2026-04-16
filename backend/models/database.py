@@ -159,6 +159,13 @@ def get_engine(database_url: str = None):
     
     if not database_url:
         database_url = "sqlite:////tmp/ai_agent_platform.db" if os.getenv("VERCEL") else "sqlite:///./ai_agent_platform.db"
+
+    # Vercel functions can only write to /tmp. Normalize relative SQLite URLs.
+    if os.getenv("VERCEL") and database_url.startswith("sqlite:///") and not database_url.startswith("sqlite:////"):
+        relative_path = database_url[len("sqlite:///"):]
+        if relative_path != ":memory:":
+            db_filename = os.path.basename(relative_path) or "ai_agent_platform.db"
+            database_url = f"sqlite:////tmp/{db_filename}"
     
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     return create_engine(database_url, connect_args=connect_args)
