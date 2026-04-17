@@ -26,7 +26,10 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     
     # Database
-    DATABASE_URL: str = _default_db_url
+    DATABASE_URL: str = os.getenv(
+        "DATABASE_URL",
+        "sqlite:////tmp/ai_agent_platform.db" if os.getenv("VERCEL") else "sqlite:///./ai_agent_platform.db"
+    )
     
     # JWT
     SECRET_KEY: str = "your-secret-key-change-in-production"

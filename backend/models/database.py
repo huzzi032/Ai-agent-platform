@@ -155,7 +155,17 @@ class AgentIntegration(Base):
 def get_engine(database_url: str = None):
     """Create database engine."""
     if database_url is None:
+        database_url = os.getenv("DATABASE_URL")
+    
+    if not database_url:
         database_url = "sqlite:////tmp/ai_agent_platform.db" if os.getenv("VERCEL") else "sqlite:///./ai_agent_platform.db"
+
+    # Vercel functions can only write to /tmp. Normalize relative SQLite URLs.
+    if os.getenv("VERCEL") and database_url.startswith("sqlite:///") and not database_url.startswith("sqlite:////"):
+        relative_path = database_url[len("sqlite:///"):]
+        if relative_path != ":memory:":
+            db_filename = os.path.basename(relative_path) or "ai_agent_platform.db"
+            database_url = f"sqlite:////tmp/{db_filename}"
     
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     return create_engine(database_url, connect_args=connect_args)
@@ -171,14 +181,6 @@ def get_session_local(engine):
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-# Module-level default session (SQLite; overridden at startup via main.py)
-_default_engine = get_engine()
-
-# Avoid import-time table creation in serverless/read-only environments.
-if not os.getenv("VERCEL"):
-    try:
-        init_db(_default_engine)
-    except Exception as exc:
-        logger.warning("Default DB initialization skipped: %s", exc)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_default_engine)
+# SessionLocal is wired at runtime by app.main lifespan.
+# Avoid creating/writing DB files at import time (serverless filesystems are read-only outside /tmp).
+SessionLocal = None

@@ -76,20 +76,25 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting up AI Agent Platform...")
     
-    # Initialize database (with serverless-safe SQLite fallback when needed).
-    database_url = settings.DATABASE_URL
+    # Initialize database
+    db_url = settings.DATABASE_URL
     try:
-        engine = get_engine(database_url)
+        engine = get_engine(db_url)
         init_db(engine)
     except Exception as db_error:
-        if database_url.startswith("sqlite"):
-            fallback_url = "sqlite:////tmp/ai_agent_platform.db"
+        # On Vercel, default relative SQLite paths are read-only. Fall back to /tmp when no DB URL is set.
+        is_vercel = bool(os.getenv("VERCEL"))
+        explicit_db_url = bool(os.getenv("DATABASE_URL"))
+
+        if is_vercel and not explicit_db_url:
+            fallback_db_url = "sqlite:////tmp/ai_agent_platform.db"
             logger.warning(
-                "Primary SQLite database initialization failed (%s). Falling back to %s",
+                "Primary DB init failed for %s (%s). Falling back to %s",
+                db_url,
                 db_error,
-                fallback_url,
+                fallback_db_url,
             )
-            engine = get_engine(fallback_url)
+            engine = get_engine(fallback_db_url)
             init_db(engine)
         else:
             raise
