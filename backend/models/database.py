@@ -1,10 +1,13 @@
 """Database models and connection setup."""
+import os
+import logging
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, Boolean, ForeignKey, JSON, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 
 Base = declarative_base()
+logger = logging.getLogger(__name__)
 
 
 class User(Base):
@@ -152,7 +155,7 @@ class AgentIntegration(Base):
 def get_engine(database_url: str = None):
     """Create database engine."""
     if database_url is None:
-        database_url = "sqlite:///./ai_agent_platform.db"
+        database_url = "sqlite:////tmp/ai_agent_platform.db" if os.getenv("VERCEL") else "sqlite:///./ai_agent_platform.db"
     
     connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
     return create_engine(database_url, connect_args=connect_args)
@@ -170,5 +173,12 @@ def get_session_local(engine):
 
 # Module-level default session (SQLite; overridden at startup via main.py)
 _default_engine = get_engine()
-init_db(_default_engine)
+
+# Avoid import-time table creation in serverless/read-only environments.
+if not os.getenv("VERCEL"):
+    try:
+        init_db(_default_engine)
+    except Exception as exc:
+        logger.warning("Default DB initialization skipped: %s", exc)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_default_engine)
