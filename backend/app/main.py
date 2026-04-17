@@ -659,6 +659,17 @@ Configuration in this package:
 
 
 # ============ HEALTH CHECK ============
+@app.get("/")
+async def root():
+    """Root endpoint for platform/runtime health visibility."""
+    return {
+        "name": "AI Agent Platform API",
+        "status": "ok",
+        "health": "/api/health",
+        "docs": "/docs"
+    }
+
+
 @app.get("/api/health", response_model=HealthCheck)
 async def health_check():
     """Health check endpoint."""
