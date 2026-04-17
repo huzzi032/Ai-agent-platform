@@ -11,8 +11,9 @@ from typing import Optional, List, Tuple
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env from project root before anything else
-load_dotenv(Path(__file__).parent.parent.parent / ".env")
+# Load local .env only outside Vercel; production should rely on platform env vars.
+if not os.getenv("VERCEL"):
+    load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -102,14 +103,29 @@ async def lifespan(app: FastAPI):
     database_module.SessionLocal = SessionLocal
 
     # Ensure local runtime directories exist for dev/serverless temp persistence.
-    os.makedirs(settings.CHROMA_PERSIST_DIRECTORY, exist_ok=True)
-    
-    # Initialize RAG service
+    chroma_dir = settings.CHROMA_PERSIST_DIRECTORY
     try:
-        rag_service = get_rag_service(settings.GROQ_API_KEY, settings.CHROMA_PERSIST_DIRECTORY)
-        logger.info("RAG service initialized")
-    except Exception as e:
-        logger.warning(f"RAG service initialization failed: {e}")
+        os.makedirs(chroma_dir, exist_ok=True)
+    except Exception as dir_error:
+        fallback_chroma_dir = "/tmp/chroma_db"
+        logger.warning(
+            "Unable to create CHROMA_PERSIST_DIRECTORY %s (%s). Falling back to %s",
+            chroma_dir,
+            dir_error,
+            fallback_chroma_dir,
+        )
+        chroma_dir = fallback_chroma_dir
+        os.makedirs(chroma_dir, exist_ok=True)
+
+    # Avoid expensive model downloads during cold start on serverless.
+    if not os.getenv("VERCEL"):
+        try:
+            get_rag_service(settings.GROQ_API_KEY, chroma_dir)
+            logger.info("RAG service initialized")
+        except Exception as e:
+            logger.warning(f"RAG service initialization failed: {e}")
+    else:
+        logger.info("Running on Vercel - RAG service will initialize lazily on first use")
     
     logger.info("AI Agent Platform started successfully!")
     

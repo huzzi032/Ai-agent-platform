@@ -1,6 +1,6 @@
 """Configuration settings for the AI Agent Platform."""
 import os
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
 from functools import lru_cache
 from typing import Optional
@@ -8,10 +8,19 @@ from pathlib import Path
 
 # Resolve .env from project root (one level up from this file's directory)
 _env_path = Path(__file__).parent.parent.parent / ".env"
+_is_vercel = bool(os.getenv("VERCEL"))
+_default_chroma_dir = "/tmp/chroma_db" if _is_vercel else "./chroma_db"
+_settings_env_file = None if _is_vercel else (str(_env_path) if _env_path.exists() else ".env")
 
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=_settings_env_file,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     ENVIRONMENT: str = "development"
     
@@ -65,10 +74,7 @@ class Settings(BaseSettings):
     CORS_ALLOWED_ORIGINS: str = "*"
     
     # Chroma
-    CHROMA_PERSIST_DIRECTORY: str = os.getenv(
-        "CHROMA_PERSIST_DIRECTORY",
-        "/tmp/chroma_db" if os.getenv("VERCEL") else "./chroma_db"
-    )
+    CHROMA_PERSIST_DIRECTORY: str = _default_chroma_dir
     
     # Embeddings
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
@@ -89,11 +95,6 @@ class Settings(BaseSettings):
                 raise ValueError("DATABASE_URL must be set in production")
         return self
     
-    class Config:
-        env_file = str(_env_path) if _env_path.exists() else ".env"
-        env_file_encoding = "utf-8"
-
-
 @lru_cache()
 def get_settings() -> Settings:
     """Get cached settings instance."""
