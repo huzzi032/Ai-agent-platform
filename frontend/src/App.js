@@ -4,9 +4,16 @@ import { AuthProvider } from './context/AuthContext';
 import Layout from './components/Layout';
 import PrivateRoute from './components/PrivateRoute';
 
-// Pages
+// Public marketing pages
+import HomePage from './pages/HomePage';
+import PricingPage from './pages/PricingPage';
+import FeaturesPage from './pages/FeaturesPage';
+
+// Auth pages
 import Login from './pages/Login';
 import Register from './pages/Register';
+
+// App pages
 import Dashboard from './pages/Dashboard';
 import Agents from './pages/Agents';
 import AgentDetail from './pages/AgentDetail';
@@ -22,14 +29,18 @@ function App() {
   return (
     <AuthProvider>
       <Routes>
-        {/* Public routes */}
+        {/* ── Public marketing routes ── */}
+        <Route path="/" element={<HomePage />} />
+        <Route path="/pricing" element={<PricingPage />} />
+        <Route path="/features" element={<FeaturesPage />} />
+
+        {/* ── Auth routes ── */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
-        
-        {/* Protected routes */}
+
+        {/* ── Protected app routes ── */}
         <Route element={<PrivateRoute />}>
           <Route element={<Layout />}>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/agents" element={<Agents />} />
             <Route path="/agents/create" element={<CreateAgent />} />
@@ -42,8 +53,8 @@ function App() {
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Route>
-        
-        {/* Catch all */}
+
+        {/* ── Catch-all ── */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AuthProvider>
